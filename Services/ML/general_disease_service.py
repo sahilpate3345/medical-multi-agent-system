@@ -261,6 +261,15 @@ Evaluate the case dynamically and output strict JSON with exactly these keys:
             data["confidence"] = 0.85
             data["confidence_percentage"] = "85.0%"
 
+        # Evaluate against 90% clinical confidence threshold to negate false negatives
+        meets_90pct = bool(data["confidence"] >= 0.90)
+        data["meets_90pct_threshold"] = meets_90pct
+        if meets_90pct:
+            data["confidence_tier"] = "High Clinical Confidence (>= 90%)"
+        else:
+            data["confidence_tier"] = "Sub-threshold (< 90%) - Clinical Confirmation Required"
+            data["clinical_recall_note"] = "Diagnostic confidence is under 90%. Immediate confirmatory diagnostic testing is recommended to negate false negatives."
+
         if "disclaimer" not in data or not data["disclaimer"]:
             data["disclaimer"] = "This is an AI-assisted diagnostic prediction and should not replace professional medical advice."
 
