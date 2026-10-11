@@ -7,19 +7,21 @@ from dotenv import load_dotenv
 from auth import get_current_user
 from schemas import ChatRequest
 
-load_dotenv()
+load_dotenv(override=True)
 
 router = APIRouter(
     prefix="/api",
     tags=["AI Assistant"]
 )
 
-api_key = os.getenv("GROQ_API_KEY")
-
-if not api_key:
-    raise RuntimeError("GROQ_API_KEY is missing")
-
-client = Groq(api_key=api_key)
+def get_groq_client():
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="GROQ_API_KEY is missing. Please set GROQ_API_KEY in your .env file."
+        )
+    return Groq(api_key=api_key)
 
 
 SYSTEM_PROMPT = """
@@ -48,8 +50,11 @@ def chat(
 ):
     try:
 
+        client = get_groq_client()
+        groq_model = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+
         response = client.chat.completions.create(
-            model="openai/gpt-oss-20b",
+            model=groq_model,
             messages=[
                 {
                     "role": "system",

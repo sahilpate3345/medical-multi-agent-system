@@ -1,10 +1,9 @@
 import os
 import gdown
-import tensorflow as tf
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 # =========================
@@ -87,6 +86,13 @@ def download_model(file_id, output_path):
 # =========================
 
 def load_xray_model():
+
+    try:
+        import tensorflow as tf
+    except ImportError:
+        raise RuntimeError(
+            "TensorFlow is not installed. Please install it using 'pip install tensorflow'"
+        )
 
     print("Checking X-Ray model...")
 
