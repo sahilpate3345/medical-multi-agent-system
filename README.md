@@ -11,9 +11,10 @@ An intelligent, multi-agent AI healthcare platform powered by FastAPI, modern ma
 - **Comprehensive Clinical Reports**: Dynamically outputs predicted condition, confidence score, severity rating (`Mild`, `Moderate`, `High`, `Emergency`), recommended specialists, differential diagnoses, recommended diagnostic tests, and precautions.
 - **Dual-Mode ML Support**: Accepts free-form symptom descriptions or traditional 13-feature tabular cardiac parameters.
 
-### 2. 🩻 Deep Learning Medical X-Ray Analysis
-- **Convolutional Neural Network**: Classifies chest X-ray images into **COVID-19**, **Normal**, and **Pneumonia**.
-- **Uncertainty & Reliability Detection**: Flags low-confidence or borderline predictions to prompt professional radiological re-evaluation.
+### 2. 🩻 Dynamic Multi-Anatomy Medical Image Intelligence
+- **Zero-Shot Anatomical Auto-Detection**: Uses open-vocabulary vision (`openai/clip-vit-base-patch32`) to automatically detect anatomical body parts—**Chest, Hand & Wrist, Lower Extremity / Knee / Leg, Craniofacial / Skull / Eye Orbit, Spine, Abdomen & Pelvis**—without requiring manual input tags.
+- **Dynamic Candidate Screening**: Evaluates condition candidates specific to the detected body region (e.g., bone fractures, joint effusions, osteoarthritis, infiltrates, orbital trauma).
+- **Clinical AI Safety Standards**: Flags screening outputs with `is_reliable: false`, `uncertainty_detected: true`, reports severity as `Indeterminate from imaging alone`, and provides calibrated specialist referrals.
 - **Format Agnostic**: Accepts standard medical image uploads (`.jpg`, `.jpeg`, `.png`, `.webp`).
 
 ### 3. 🤖 Medical AI Assistant & RAG
@@ -65,7 +66,7 @@ Interactive Swagger API documentation will be available at:
 | `GET` | `/api/auth/profile` | Retrieve authenticated user profile |
 | `GET` | `/api/auth/admin` | Admin dashboard access (Admin only) |
 | `POST` | `/api/ml/disease-predict` | Dynamic symptom analysis & disease prediction |
-| `POST` | `/api/image/analyze` | Deep learning chest X-ray image classification |
+| `POST` | `/api/image/analyze` | Dynamic multi-anatomy medical image analysis (Hand, Leg, Eye, Chest, etc.) |
 | `POST` | `/api/chat` | AI Healthcare chat consultation |
 | `POST` | `/api/rag/upload` | Upload medical document (PDF) for analysis |
 | `POST` | `/api/rag/ask` | Query uploaded medical documents |
