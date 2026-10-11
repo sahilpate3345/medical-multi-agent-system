@@ -256,32 +256,37 @@ def analyze_medical_image_dynamically(
         try:
             model = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
             prompt = f"""
-You are an expert diagnostic radiologist.
-A patient radiograph was analyzed with zero-shot computer vision:
-- Anatomical Region: {anatomy_display} (Confidence: {anatomy_confidence*100:.1f}%)
-- Primary Vision Finding: {primary_finding} (Confidence: {pathology_conf*100:.1f}%)
-- Pathological Probabilities: {json.dumps(pathology_results)}
+You are a conservative, rigorous diagnostic radiologist assisting in clinical decision support.
+A patient radiograph was classified with machine learning vision models:
+- Anatomical Region Identified: {anatomy_display} (Model Probability: {anatomy_confidence*100:.1f}%)
+- Primary Vision Pattern: {primary_finding} (Model Probability: {pathology_conf*100:.1f}%)
+- Model Output Probabilities: {json.dumps(pathology_results)}
 
-Synthesize this into a structured JSON radiology diagnosis with these exact keys:
+CRITICAL MEDICAL INSTRUCTIONS:
+1. Do NOT invent or assert unverified granular lesions (e.g. do NOT claim 'bilateral posterior ground-glass opacities' or specific segment consolidations) unless supported by verified radiologist findings.
+2. Clinical severity CANNOT be determined from this radiograph alone; patient vitals (SpO2, respiration, blood pressure) and physical exam are required.
+3. State that automated high confidence does not guarantee clinical accuracy.
+
+Synthesize into strict valid JSON with these exact keys:
 {{
-    "primary_diagnosis": "<formal medical diagnostic title>",
-    "severity": "<one of 'Mild', 'Moderate', 'High', 'Emergency'>",
-    "radiological_observations": "<detailed description of findings for this body part (bones, soft tissue, joint, or lung parenchyma)>",
+    "primary_diagnosis": "<formal medical classification title>",
+    "radiological_observations": "<objective, measured radiological summary describing the pattern observed without asserting unverified granular lesions>",
+    "clinical_urgency": "<one of 'Urgent Consultation', 'Prompt Evaluation', 'Routine / Non-urgent'>",
     "differential_diagnoses": [
-        {{"condition": "<differential 1>", "probability": 0.15, "severity": "<severity>"}}
+        {{"condition": "<differential 1>", "probability": <float>, "notes": "<clinical note>"}}
     ],
-    "immediate_precautions": [<3 concise precautions, e.g. splinting, non-weight bearing, eye shield, etc.>],
-    "recommended_clinical_tests": [<3 targeted laboratory or imaging tests>]
+    "immediate_precautions": [<3 concise precautions, e.g. immobilization, vitals monitoring, etc.>],
+    "recommended_clinical_tests": [<3 targeted laboratory or confirmatory imaging tests>]
 }}
 """
             resp = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You are a clinical radiologist. Return ONLY strict valid JSON."},
+                    {"role": "system", "content": "You are a conservative, evidence-based clinical radiologist. Return ONLY strict valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.2,
+                temperature=0.1,
                 max_tokens=600
             )
             llm_report = json.loads(resp.choices[0].message.content)
@@ -291,18 +296,17 @@ Synthesize this into a structured JSON radiology diagnosis with these exact keys
     # Fallback / synthesis merging
     if llm_report:
         diag_title = llm_report.get("primary_diagnosis", primary_finding)
-        severity = llm_report.get("severity", "Moderate")
-        obs = llm_report.get("radiological_observations", f"Radiographic assessment of {anatomy_display} indicates {primary_finding}.")
+        clinical_urgency = llm_report.get("clinical_urgency", "Prompt Evaluation")
+        obs = llm_report.get("radiological_observations", f"Pattern classification of {anatomy_display} is consistent with {primary_finding}. Formal radiologist review is required.")
         diffs = llm_report.get("differential_diagnoses", [])
-        precautions = llm_report.get("immediate_precautions", ["Rest affected area", "Consult attending physician"])
+        precautions = llm_report.get("immediate_precautions", ["Protect affected area", "Consult attending physician"])
         rec_tests = llm_report.get("recommended_clinical_tests", TESTS_MAP.get(detected_anatomy_key, []))
     else:
         diag_title = primary_finding
-        is_fracture_or_emergency = any(k in primary_finding.lower() for k in ["fracture", "dislocation", "blowout", "perforation", "obstruction"])
-        severity = "Emergency" if is_fracture_or_emergency else ("Moderate" if "pneumonia" in primary_finding.lower() else "Mild")
-        obs = f"Computer vision analysis of {anatomy_display} demonstrates findings consistent with {primary_finding}."
+        clinical_urgency = "Urgent Consultation" if any(k in primary_finding.lower() for k in ["fracture", "dislocation", "blowout", "perforation", "obstruction"]) else "Prompt Evaluation"
+        obs = f"Computer vision pattern analysis of {anatomy_display} suggests {primary_finding}. Definitive lesion characterization requires radiologist review and clinical correlation."
         diffs = [
-            {"condition": k.title(), "probability": v, "severity": "Moderate"}
+            {"condition": k.title(), "probability": v, "notes": "Alternative pattern consideration"}
             for k, v in list(pathology_results.items())[1:3]
         ]
         precautions = [
@@ -315,11 +319,20 @@ Synthesize this into a structured JSON radiology diagnosis with these exact keys
             "Clinical physical examination by an attending physician"
         ])
 
-    # 4. Clinical Thresholds & Metrics
-    final_confidence = round(max(pathology_conf, 0.75), 4)
-    meets_90 = bool(final_confidence >= 0.90)
-    is_reliable = bool(final_confidence >= 0.70)
-    conf_pct = f"{int(round(final_confidence * 100))}%"
+    # 4. Rigorous Clinical Thresholds, Uncertainty & Reliability Checks
+    # Actual model probability without artificial inflation
+    genuine_confidence = round(float(pathology_conf), 4) if pathology_conf else 0.50
+    meets_90 = bool(genuine_confidence >= 0.90)
+    conf_pct = f"{int(round(genuine_confidence * 100))}%"
+
+    # Uncertainty check: evaluate distribution spread / entropy
+    probs_list = [v for v in pathology_results.values() if isinstance(v, (int, float))]
+    spread = (max(probs_list) - min(probs_list)) if len(probs_list) >= 2 else 1.0
+    has_high_uncertainty = bool(spread < 0.25)
+
+    # Reliability MUST depend on clinical validation and uncertainty, not confidence alone
+    # Automated AI predictions without licensed human radiologist sign-off or validated clinical trials cannot claim true reliability
+    is_reliable = False  # Explicitly false: AI screening only; requires radiologist validation
 
     specialist = SPECIALIST_MAP.get(detected_anatomy_key, "Orthopedic Surgeon / Radiologist")
 
@@ -330,18 +343,27 @@ Synthesize this into a structured JSON radiology diagnosis with these exact keys
         "anatomy_detection_confidence": f"{int(round(anatomy_confidence * 100))}%",
         "prediction": {
             "class_name": diag_title,
-            "confidence": final_confidence,
-            "confidence_percentage": conf_pct
+            "confidence": genuine_confidence,
+            "confidence_percentage": conf_pct,
+            "confidence_note": "Model probability output; high numerical confidence does not guarantee clinical diagnostic accuracy."
         },
         "class_probabilities": pathology_results,
         "meets_90pct_threshold": meets_90,
-        "confidence_tier": "High Clinical Confidence (>= 90%)" if meets_90 else "Moderate Clinical Confidence (70% - 89%)",
-        "severity": severity,
+        "threshold_note": "Numerical threshold check (score >= 0.90); this is a mathematical cutoff and does not establish clinical certainty.",
+        "severity": "Indeterminate from imaging alone",
+        "severity_note": "Clinical severity cannot be determined reliably from this radiograph alone; patient vital signs (SpO2, heart rate, blood pressure, respiratory rate) and physical examination are required.",
+        "clinical_urgency": clinical_urgency,
         "recommended_specialist": specialist,
         "diagnosis_summary": obs,
         "differential_diagnoses": diffs,
         "recommended_clinical_tests": rec_tests,
         "immediate_precautions": precautions,
         "is_reliable": is_reliable,
-        "disclaimer": "AI prediction only; not a confirmed medical diagnosis."
+        "reliability_assessment": {
+            "is_reliable": is_reliable,
+            "uncertainty_detected": has_high_uncertainty,
+            "validation_status": "Unvalidated Automated Screening",
+            "clinical_guidance": "High confidence does not guarantee accuracy. Automated AI screening requires validation against clinical gold standards, patient vitals, and formal radiologist peer review."
+        },
+        "disclaimer": "AI prediction only; not a confirmed medical diagnosis. Clinical correlation and licensed radiological review are mandatory."
     }
