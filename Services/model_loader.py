@@ -85,6 +85,34 @@ def download_model(file_id, output_path):
 # LOAD X-RAY MODEL
 # =========================
 
+PRETRAINED_XRAY_MODEL_ID = "yuighj123/image_classification_covid19"
+_xray_vision_pipeline = None
+
+
+def load_xray_vision_pipeline():
+    """
+    Loads and caches the fine-tuned Medical Vision Transformer pipeline
+    specialized in COVID-19, Normal, and Viral Pneumonia Chest X-Rays.
+    """
+    global _xray_vision_pipeline
+    if _xray_vision_pipeline is not None:
+        return _xray_vision_pipeline
+
+    print(f"Loading pretrained medical Vision Transformer: {PRETRAINED_XRAY_MODEL_ID}...")
+    try:
+        from transformers import pipeline
+        _xray_vision_pipeline = pipeline(
+            "image-classification",
+            model=PRETRAINED_XRAY_MODEL_ID,
+            device=-1
+        )
+        print("Pretrained medical Vision Transformer loaded successfully!")
+        return _xray_vision_pipeline
+    except Exception as e:
+        print(f"Warning: Failed to load Vision Transformer ({e}), falling back to Keras model.")
+        return None
+
+
 def load_xray_model():
 
     try:

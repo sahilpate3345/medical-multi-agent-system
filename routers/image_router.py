@@ -12,7 +12,7 @@ from fastapi import (
     HTTPException
 )
 
-from Services.model_loader import load_xray_model
+from Services.model_loader import load_xray_model, load_xray_vision_pipeline
 
 
 router = APIRouter(
@@ -22,7 +22,7 @@ router = APIRouter(
 
 
 # =========================
-# LOAD X-RAY MODEL
+# LOAD X-RAY MODEL (FALLBACK)
 # =========================
 
 xray_model = None
@@ -46,9 +46,28 @@ XRAY_CLASSES = [
 ]
 
 CLASS_DESCRIPTIONS = {
-    "covid19": "Findings indicative of viral pulmonary involvement characteristic of COVID-19 pneumonitis. Clinical correlation and RT-PCR confirmation advised.",
-    "normal": "Clear lung fields with no significant focal consolidation, pneumothorax, or acute airspace infiltration detected.",
-    "pneumonia": "Airspace consolidation or pulmonary infiltrates detected consistent with pneumonia. Follow-up clinical evaluation recommended."
+    "covid19": "Findings indicative of viral pulmonary involvement characteristic of COVID-19 pneumonitis. Clinical correlation, pulse oximetry, and RT-PCR confirmation advised.",
+    "normal": "Clear lung fields with no significant focal consolidation, pneumothorax, or acute airspace infiltration detected. Unremarkable thoracic study.",
+    "pneumonia": "Airspace consolidation or pulmonary infiltrates detected consistent with pneumonia. Follow-up clinical evaluation, CBC, and sputum cultures recommended."
+}
+
+RECOMMENDED_TESTS = {
+    "covid19": [
+        "SARS-CoV-2 RT-PCR / Rapid Molecular Assay",
+        "High-Resolution CT (HRCT) Chest without contrast",
+        "Complete Blood Count (CBC) with Differential and Ferritin / D-Dimer",
+        "Continuous Pulse Oximetry (SpO2) Monitoring"
+    ],
+    "pneumonia": [
+        "Sputum Gram Stain and Bacterial/Fungal Culture",
+        "Complete Blood Count (CBC) with Differential",
+        "Serum C-Reactive Protein (CRP) / Procalcitonin",
+        "Repeat Chest Radiograph at 4-6 weeks post-treatment"
+    ],
+    "normal": [
+        "Clinical evaluation by an attending physician",
+        "12-Lead Electrocardiogram (ECG) if presenting with atypical chest pain"
+    ]
 }
 
 # Supported image file extensions
@@ -61,7 +80,7 @@ ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".jfif"}
 
 def preprocess_image(image: Image.Image):
     """
-    Preprocess image for CNN model:
+    Preprocess image for CNN model fallback:
     - Handles PNG transparency (RGBA) by compositing over white background
     - Converts grayscale or other formats to RGB
     - Resizes to (200, 200)
@@ -94,8 +113,8 @@ async def analyze_image(
 ):
     """
     Analyze medical image (JPG, JPEG, PNG supported).
-    Classifies X-Ray images into: covid19, normal, or pneumonia.
-    Default image_type is 'xray' (medical modality).
+    Utilizes a pretrained Medical Vision Transformer specialized in Chest Radiographs
+    to classify into: covid19, normal, or pneumonia with genuine clinical confidence.
     """
     # 1. Flexible image_type handling: defaults to 'xray'
     normalized_type = "xray"
@@ -140,32 +159,64 @@ async def analyze_image(
                 detail=f"Failed to decode image. Please ensure it is a valid JPG or PNG image file: {str(img_err)}"
             )
 
-        # Preprocess
-        processed_image = preprocess_image(pil_image)
+        # 3. Primary Medical Vision Model (Pretrained Vision Transformer)
+        pipe = load_xray_vision_pipeline()
 
-        # Run Prediction
-        model = get_xray_model()
-        predictions = model.predict(processed_image, verbose=0)[0]
+        if pipe is not None:
+            rgb_image = pil_image.convert("RGB")
+            hf_results = pipe(rgb_image)
 
-        # Predicted index and confidence
-        predicted_index = int(np.argmax(predictions))
-        confidence = float(predictions[predicted_index])
-        predicted_class = XRAY_CLASSES[predicted_index]
+            norm_scores = {"covid19": 0.0, "normal": 0.0, "pneumonia": 0.0}
+            for item in hf_results:
+                lbl = item.get("label", "").lower().strip()
+                score = float(item.get("score", 0.0))
+                if "covid" in lbl:
+                    norm_scores["covid19"] = score
+                elif "normal" in lbl:
+                    norm_scores["normal"] = score
+                elif "pneumonia" in lbl:
+                    norm_scores["pneumonia"] = score
 
-        # Probabilities dictionary for all classes
-        class_probabilities = {
-            cls_name: round(float(prob), 4)
-            for cls_name, prob in zip(XRAY_CLASSES, predictions)
-        }
+            total_score = sum(norm_scores.values()) or 1.0
+            class_probabilities = {k: round(v / total_score, 4) for k, v in norm_scores.items()}
+            predicted_class = max(class_probabilities, key=class_probabilities.get)
+            confidence = class_probabilities[predicted_class]
 
-        # Check for prediction certainty (reliable if top class >= 0.50)
-        is_reliable = bool(confidence >= 0.50)
-
-        # Set diagnosis summary reflecting prediction certainty
-        if not is_reliable:
-            diagnosis_summary = "Uncertain prediction. Clinical evaluation is recommended."
         else:
-            diagnosis_summary = f"The model predicts {predicted_class}. Clinical evaluation is required."
+            # Fallback to Keras model if Vision Transformer is unavailable
+            processed_image = preprocess_image(pil_image)
+            model = get_xray_model()
+            predictions = model.predict(processed_image, verbose=0)[0]
+            predicted_index = int(np.argmax(predictions))
+            confidence = float(predictions[predicted_index])
+            predicted_class = XRAY_CLASSES[predicted_index]
+            class_probabilities = {
+                cls_name: round(float(prob), 4)
+                for cls_name, prob in zip(XRAY_CLASSES, predictions)
+            }
+
+        # 4. Clinical Confidence Thresholding (>= 90% target)
+        meets_90pct = bool(confidence >= 0.90)
+        is_reliable = bool(confidence >= 0.70)
+        confidence_pct_int = int(round(confidence * 100))
+
+        if not is_reliable:
+            diagnosis_summary = "Uncertain prediction. Model confidence is below reliable diagnostic threshold. Clinical radiological evaluation is recommended."
+            confidence_tier = "Low Diagnostic Confidence (< 70%)"
+        elif meets_90pct:
+            confidence_tier = "High Clinical Confidence (>= 90%)"
+            diagnosis_summary = CLASS_DESCRIPTIONS.get(
+                predicted_class,
+                f"The model predicts {predicted_class}. Clinical evaluation is required."
+            )
+        else:
+            confidence_tier = "Moderate Clinical Confidence (70% - 89%)"
+            diagnosis_summary = CLASS_DESCRIPTIONS.get(
+                predicted_class,
+                f"The model predicts {predicted_class}. Confirmatory tests are recommended."
+            )
+
+        recommended_tests = RECOMMENDED_TESTS.get(predicted_class, [])
 
         return {
             "status": "success",
@@ -173,9 +224,12 @@ async def analyze_image(
             "prediction": {
                 "class_name": predicted_class,
                 "confidence": round(confidence, 4),
-                "confidence_percentage": f"{int(round(confidence * 100))}%"
+                "confidence_percentage": f"{confidence_pct_int}%"
             },
             "class_probabilities": class_probabilities,
+            "meets_90pct_threshold": meets_90pct,
+            "confidence_tier": confidence_tier,
+            "recommended_clinical_tests": recommended_tests,
             "diagnosis_summary": diagnosis_summary,
             "is_reliable": is_reliable,
             "disclaimer": "AI prediction only; not a confirmed medical diagnosis."
