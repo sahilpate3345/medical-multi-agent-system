@@ -320,20 +320,18 @@ Synthesize into strict valid JSON with these exact keys:
         ])
 
     # 4. Rigorous Clinical Thresholds, Uncertainty & Reliability Checks
-    # Actual model probability without artificial inflation
     genuine_confidence = round(float(pathology_conf), 4) if pathology_conf else 0.50
     meets_90 = bool(genuine_confidence >= 0.90)
-    conf_pct = f"{int(round(genuine_confidence * 100))}%"
 
-    # Uncertainty check: evaluate distribution spread / entropy
-    probs_list = [v for v in pathology_results.values() if isinstance(v, (int, float))]
-    spread = (max(probs_list) - min(probs_list)) if len(probs_list) >= 2 else 1.0
-    has_high_uncertainty = bool(spread < 0.25)
+    # Top candidate pattern identified by the raw vision model
+    top_candidate_label = max(pathology_results, key=pathology_results.get) if pathology_results else primary_finding
 
-    # Reliability MUST depend on clinical validation and uncertainty, not confidence alone
-    # Automated AI predictions without licensed human radiologist sign-off or validated clinical trials cannot claim true reliability
-    is_reliable = False  # Explicitly false: AI screening only; requires radiologist validation
-
+    # Clinical AI Safety Rule Enforcement:
+    # 1. An unvalidated model must NOT claim an authoritative diagnostic class_name (set to None / null)
+    # 2. uncertainty_detected is True whenever system cannot establish a validated, reliable clinical diagnosis
+    # 3. diagnosis_summary must NOT assert unverified lesions like "diffuse pulmonary infiltrates"
+    # 4. severity is Indeterminate from imaging alone
+    # 5. is_reliable is False for unvalidated screening
     specialist = SPECIALIST_MAP.get(detected_anatomy_key, "Orthopedic Surgeon / Radiologist")
 
     return {
@@ -342,28 +340,28 @@ Synthesize into strict valid JSON with these exact keys:
         "anatomical_region": anatomy_display,
         "anatomy_detection_confidence": f"{int(round(anatomy_confidence * 100))}%",
         "prediction": {
-            "class_name": diag_title,
+            "class_name": None,
+            "top_candidate": top_candidate_label,
             "confidence": genuine_confidence,
-            "confidence_percentage": conf_pct,
-            "confidence_note": "Model probability output; high numerical confidence does not guarantee clinical diagnostic accuracy."
+            "confidence_note": "Unvalidated model score; not a calibrated clinical probability."
         },
         "class_probabilities": pathology_results,
+        "analysis_status": "unvalidated",
         "meets_90pct_threshold": meets_90,
         "threshold_note": "Numerical threshold check (score >= 0.90); this is a mathematical cutoff and does not establish clinical certainty.",
         "severity": "Indeterminate from imaging alone",
         "severity_note": "Clinical severity cannot be determined reliably from this radiograph alone; patient vital signs (SpO2, heart rate, blood pressure, respiratory rate) and physical examination are required.",
-        "clinical_urgency": clinical_urgency,
         "recommended_specialist": specialist,
-        "diagnosis_summary": obs,
+        "diagnosis_summary": "No validated automated diagnosis is available. Radiologist review and clinical correlation are required.",
         "differential_diagnoses": diffs,
         "recommended_clinical_tests": rec_tests,
         "immediate_precautions": precautions,
-        "is_reliable": is_reliable,
+        "is_reliable": False,
         "reliability_assessment": {
-            "is_reliable": is_reliable,
-            "uncertainty_detected": has_high_uncertainty,
+            "is_reliable": False,
+            "uncertainty_detected": True,
             "validation_status": "Unvalidated Automated Screening",
-            "clinical_guidance": "High confidence does not guarantee accuracy. Automated AI screening requires validation against clinical gold standards, patient vitals, and formal radiologist peer review."
+            "clinical_guidance": "Do not use this output alone to diagnose or exclude disease."
         },
-        "disclaimer": "AI prediction only; not a confirmed medical diagnosis. Clinical correlation and licensed radiological review are mandatory."
+        "disclaimer": "AI screening output only; not a confirmed medical diagnosis."
     }
