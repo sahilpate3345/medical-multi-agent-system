@@ -82,11 +82,38 @@ def download_model(file_id, output_path):
 
 
 # =========================
-# LOAD X-RAY MODEL
+# LOAD X-RAY & VISION MODELS
 # =========================
 
 PRETRAINED_XRAY_MODEL_ID = "yuighj123/image_classification_covid19"
 _xray_vision_pipeline = None
+
+CLIP_MODEL_ID = "openai/clip-vit-base-patch32"
+_clip_zero_shot_pipeline = None
+
+
+def load_clip_zero_shot_pipeline():
+    """
+    Loads and caches the open-vocabulary Zero-Shot Vision Classifier (CLIP)
+    for dynamic anatomical recognition (Hand, Leg, Eye/Skull, Spine, Pelvis, Chest, Abdomen).
+    """
+    global _clip_zero_shot_pipeline
+    if _clip_zero_shot_pipeline is not None:
+        return _clip_zero_shot_pipeline
+
+    print(f"Loading Zero-Shot Multi-Anatomy Vision Pipeline: {CLIP_MODEL_ID}...")
+    try:
+        from transformers import pipeline
+        _clip_zero_shot_pipeline = pipeline(
+            "zero-shot-image-classification",
+            model=CLIP_MODEL_ID,
+            device=-1
+        )
+        print("Zero-Shot Multi-Anatomy Vision Pipeline loaded successfully!")
+        return _clip_zero_shot_pipeline
+    except Exception as e:
+        print(f"Warning: Failed to load CLIP zero-shot pipeline ({e})")
+        return None
 
 
 def load_xray_vision_pipeline():
